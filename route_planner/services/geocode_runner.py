@@ -21,14 +21,26 @@ class GeocodeRunSummary:
     unmatched: int = 0
     failed: int = 0
     skipped: int = 0
+    eligible: int = 0
+    api_requests: int = 0
+    stopped_for_api_budget: bool = False
 
     def as_text(self) -> str:
-        return (
-            f"Matched: {self.matched}\n"
-            f"Unmatched: {self.unmatched}\n"
-            f"Failed: {self.failed}\n"
-            f"Skipped: {self.skipped}\n"
+        lines = []
+        if self.eligible:
+            lines.append(f"Eligible: {self.eligible}")
+        lines.extend(
+            [
+                f"Matched: {self.matched}",
+                f"Unmatched: {self.unmatched}",
+                f"Failed: {self.failed}",
+                f"Skipped (already geocoded): {self.skipped}",
+                f"API requests used: {self.api_requests}",
+            ]
         )
+        if self.stopped_for_api_budget:
+            lines.append("Stopped early: API request budget reached (re-run tomorrow).")
+        return "\n".join(lines) + "\n"
 
 
 def stations_to_geocode(*, force: bool, limit: int | None):
@@ -114,9 +126,12 @@ def run_geocode_job(
     session=None,
 ) -> GeocodeRunSummary:
     stations, skipped = stations_to_geocode(force=force, limit=limit)
-    summary = GeocodeRunSummary(skipped=skipped)
+    summary = GeocodeRunSummary(skipped=skipped, eligible=len(stations))
 
-    if dry_run or not stations:
+    if dry_run:
+        return summary
+
+    if not stations:
         return summary
 
     addresses = [fuel_station_to_address(station) for station in stations]

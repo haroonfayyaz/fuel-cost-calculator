@@ -22,6 +22,8 @@ services:
 
   web:
     build: .
+    env_file:
+      - .env
     environment:
       DEBUG: ${DEBUG:-true}
       SECRET_KEY: ${SECRET_KEY:-django-insecure-change-me}
