@@ -36,8 +36,12 @@ services:
       ROUTE_STATION_CORRIDOR_MILES: ${ROUTE_STATION_CORRIDOR_MILES:-5}
       VEHICLE_MAX_RANGE_MILES: ${VEHICLE_MAX_RANGE_MILES:-500}
       VEHICLE_MPG: ${VEHICLE_MPG:-10}
+      # Bind mounts on Docker Desktop often miss inotify events; poll for reload.
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
+    volumes:
+      - .:/app
     depends_on:
       db:
         condition: service_healthy

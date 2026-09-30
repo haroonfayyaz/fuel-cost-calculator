@@ -23,6 +23,12 @@ Bootstrap API for fuel-efficient U.S. route planning (routing and fuel optimizat
 
    The web container waits for PostgreSQL to become healthy, then runs migrations before starting Django.
 
+   Application code is bind-mounted into the container (`.:/app`), so Python changes reload automatically with `runserver`. Rebuild only when `Dockerfile` or `requirements.txt` change:
+
+   ```bash
+   docker compose up --build
+   ```
+
 ## Migrations
 
 Migrations run automatically on container start. To run them manually:

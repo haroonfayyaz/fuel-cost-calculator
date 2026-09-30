@@ -44,7 +44,7 @@ DEBUG = _env_bool("DEBUG", False)
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,web").split(",")
+    for host in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,web,0.0.0.0").split(",")
     if host.strip()
 ]
 
@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.gis",
+    "django.contrib.postgres",
     "rest_framework",
     "drf_spectacular",
     "route_planner",
