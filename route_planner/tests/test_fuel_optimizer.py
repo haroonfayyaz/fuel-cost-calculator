@@ -210,6 +210,19 @@ def test_total_cost_equals_sum_of_stop_costs():
     assert plan.total_fuel_cost == sum((s.cost for s in plan.stops), Decimal("0"))
 
 
+def test_float_route_distance_from_routing_provider():
+    """ORS returns float miles; Decimal(float) must not break fuel balance."""
+    ors_like_miles = 1442.6752650165001
+    stations = [
+        station("400", "3.50"),
+        station("900", "3.25"),
+        station("1200", "3.00"),
+    ]
+    plan = optimize_fuel_plan(ors_like_miles, stations)
+    assert plan.stops
+    assert plan.ending_fuel_gallons >= 0
+
+
 def test_segment_feasibility_simulation():
     stations = [station("480", "3.00"), station("980", "2.75")]
     route = Decimal("1000")

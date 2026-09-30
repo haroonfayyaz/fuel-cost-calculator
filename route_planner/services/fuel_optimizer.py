@@ -143,7 +143,11 @@ def optimize_fuel_plan(
     starting_fuel_gallons: Decimal = TANK_CAPACITY_GALLONS,
 ) -> FuelPlan:
     del mpg  # fixed constant for this assessment
-    route_distance = Decimal(route_distance_miles)
+    route_distance = (
+        route_distance_miles
+        if isinstance(route_distance_miles, Decimal)
+        else Decimal(str(route_distance_miles))
+    )
     if route_distance <= 0:
         raise ValueError("route_distance_miles must be positive.")
 

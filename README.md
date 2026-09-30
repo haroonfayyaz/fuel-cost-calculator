@@ -34,39 +34,31 @@ API for fuel-efficient U.S. driving routes: ORS routing, PostGIS station corrido
 
 2. **Geocode stations** so they appear along routes.
 
-   **Option A — finish in one sitting (recommended, no ORS quota):** OpenStreetMap Nominatim (~1 request/sec → ~2–3 hours for ~6k rows). Set a real contact in `.env`:
+   | Method | Speed | Cost | Command |
+   |--------|--------|------|---------|
+   | **LocationIQ** (recommended) | ~2 req/s, 5k+/day free tier | Free signup | `geocode_fuel_stations_locationiq` |
+   | Public Nominatim | ~1 req/s, strict limits | Free | `geocode_fuel_stations_nominatim` |
+   | ORS/Pelias | 2800/run, 3k/day shared with routing | Your ORS key | `geocode_fuel_stations_ors` |
+   | U.S. Census batch | Very fast batches | Free, low match on exits | `geocode_fuel_stations` |
 
-   ```bash
-   # In .env:
-   # NOMINATIM_USER_AGENT=FuelRoutePlanner/0.1 (you@example.com)
+   **Option A — LocationIQ (fastest practical bulk path):**
 
-   docker compose exec web python manage.py geocode_fuel_stations_nominatim --dry-run
-   docker compose exec web python manage.py geocode_fuel_stations_nominatim
-   ```
+   1. Create a free key at [locationiq.com](https://locationiq.com/).
+   2. Add to `.env`: `LOCATIONIQ_API_KEY=pk....`
+   3. `docker compose up -d web`
+   4. ```bash
+      docker compose exec web python manage.py geocode_fuel_stations_locationiq --dry-run
+      docker compose exec web python manage.py geocode_fuel_stations_locationiq --single-query
+      ```
+      `--single-query` skips the name fallback (half the API calls; slightly fewer matches).
 
-   Expect **~3–4 hours** for ~6k rows (1.1s pause per station plus 1–2 Nominatim calls each). Progress lines print every 25 stations on stderr. Monitor with a second terminal:
+   **Option B — Public Nominatim (slow, no signup):** set `NOMINATIM_USER_AGENT`, then `geocode_fuel_stations_nominatim` (~3–4 hours for ~6k rows).
 
-   ```bash
-   docker compose exec web python manage.py geocode_fuel_stations_nominatim --dry-run
-   ```
+   **Option C — ORS only:** `geocode_fuel_stations_ors` — save your 3000/day quota for routing if possible.
 
-   Use ORS only for **routing** (`/fuel-plan/`) while Nominatim fills station coordinates.
+   **Option D — Census:** `geocode_fuel_stations` — quick but most highway addresses stay unmatched.
 
-   **Option B — ORS/Pelias (same key as routing, ~3000 requests/day on free tier):**
-
-   ```bash
-   docker compose exec web python manage.py geocode_fuel_stations_ors --dry-run
-   docker compose exec web python manage.py geocode_fuel_stations_ors
-   # Stops after 2800 calls/run; repeat daily. Set ORS_GEOCODE_MAX_API_REQUESTS_PER_RUN=0 only if you have a paid quota.
-   ```
-
-   **Option C — Census batch (free, unlimited batches, low match rate on highway addresses):**
-
-   ```bash
-   docker compose exec web python manage.py geocode_fuel_stations --limit 1000
-   ```
-
-   Typical workflow: Census optional → **Nominatim for bulk** → ORS for live route API only. Re-run Nominatim until `--dry-run` shows `Eligible: 0`.
+   You do **not** need 100% geocoded rows for the app to work — long routes need enough **matched** stations along the corridor. Try `/fuel-plan/` after LocationIQ; re-run until `--dry-run` eligible is low.
 
 3. **Plan a route** via API (see below).
 

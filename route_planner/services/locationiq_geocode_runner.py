@@ -1,4 +1,4 @@
-"""Bulk geocode FuelStation rows via Nominatim (separate from ORS quota)."""
+"""Bulk geocode via LocationIQ (faster quota than public Nominatim)."""
 
 from __future__ import annotations
 
@@ -8,23 +8,24 @@ from route_planner.models import FuelStation
 from route_planner.services.bulk_geocode_runner import run_bulk_geocode_job
 from route_planner.services.fuel_station_geocode import fuel_station_geocode_queries
 from route_planner.services.geocode_runner import GeocodeRunSummary
-from route_planner.services.nominatim_geocoder import (
-    NominatimGeocoderError,
-    NominatimRateLimitedError,
+from route_planner.services.locationiq_geocoder import (
+    LocationIQGeocoderError,
+    LocationIQRateLimitedError,
     search_us_location,
 )
 from route_planner.services.ors_geocode_runner import _ApiRequestBudget
 
 
-def geocode_station_with_nominatim(
+def _resolve_with_locationiq(
     station: FuelStation,
     budget: _ApiRequestBudget,
     *,
-    user_agent: str,
+    api_key: str,
+    base_url: str,
     timeout_seconds: float,
-    single_query_only: bool = False,
-    session=None,
-    min_request_interval_seconds: float = 1.0,
+    min_request_interval_seconds: float,
+    single_query_only: bool,
+    session,
 ) -> Point | None:
     queries = fuel_station_geocode_queries(station)
     if single_query_only and queries:
@@ -35,43 +36,46 @@ def geocode_station_with_nominatim(
         try:
             point = search_us_location(
                 query,
-                user_agent=user_agent,
+                api_key=api_key,
+                base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 min_request_interval_seconds=min_request_interval_seconds,
                 session=session,
             )
-        except NominatimRateLimitedError:
+        except LocationIQRateLimitedError:
             raise
-        except NominatimGeocoderError:
+        except LocationIQGeocoderError:
             continue
         if point is not None:
             return point
     return None
 
 
-def run_nominatim_geocode_job(
+def run_locationiq_geocode_job(
     *,
-    user_agent: str,
+    api_key: str,
+    base_url: str,
     timeout_seconds: float,
+    min_request_interval_seconds: float = 0.5,
     force: bool = False,
     limit: int | None = None,
     dry_run: bool = False,
-    delay_seconds: float = 1.1,
+    delay_seconds: float = 0.0,
     max_api_requests: int | None = None,
     single_query_only: bool = False,
     session=None,
     db_batch_size: int = 100,
-    min_request_interval_seconds: float = 1.0,
 ) -> GeocodeRunSummary:
     def resolve(station: FuelStation, budget: _ApiRequestBudget) -> Point | None:
-        return geocode_station_with_nominatim(
+        return _resolve_with_locationiq(
             station,
             budget,
-            user_agent=user_agent,
+            api_key=api_key,
+            base_url=base_url,
             timeout_seconds=timeout_seconds,
+            min_request_interval_seconds=min_request_interval_seconds,
             single_query_only=single_query_only,
             session=session,
-            min_request_interval_seconds=min_request_interval_seconds,
         )
 
     return run_bulk_geocode_job(
@@ -82,5 +86,5 @@ def run_nominatim_geocode_job(
         delay_seconds=delay_seconds,
         max_api_requests=max_api_requests,
         db_batch_size=db_batch_size,
-        rate_limit_exception=NominatimRateLimitedError,
+        rate_limit_exception=LocationIQRateLimitedError,
     )
