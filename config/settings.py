@@ -133,6 +133,15 @@ SPECTACULAR_SETTINGS = {
 # External routing (OpenRouteService / HeiGIT)
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 ORS_BASE_URL = _env("ORS_BASE_URL", "https://api.heigit.org").rstrip("/")
+ORS_CONNECT_TIMEOUT_SECONDS = _env_int("ORS_CONNECT_TIMEOUT_SECONDS", 5)
+ORS_READ_TIMEOUT_SECONDS = _env_int("ORS_READ_TIMEOUT_SECONDS", 30)
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "fuel-route-planner",
+    }
+}
 
 # Application tuning (used by future route/fuel services)
 ROUTE_CACHE_TIMEOUT_SECONDS = _env_int("ROUTE_CACHE_TIMEOUT_SECONDS", 86400)
