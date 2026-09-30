@@ -74,7 +74,7 @@ class FuelStationQuerySet(models.QuerySet):
 
     def geocoded(self):
         return self.filter(
-            geocoding_status=FuelStation.GeocodingStatus.SUCCESS,
+            geocoding_status=FuelStation.GeocodingStatus.MATCHED,
             location__isnull=False,
         )
 
@@ -82,7 +82,8 @@ class FuelStationQuerySet(models.QuerySet):
 class FuelStation(models.Model):
     class GeocodingStatus(models.TextChoices):
         PENDING = "pending", "Pending"
-        SUCCESS = "success", "Success"
+        MATCHED = "matched", "Matched"
+        UNMATCHED = "unmatched", "Unmatched"
         FAILED = "failed", "Failed"
         SKIPPED = "skipped", "Skipped"
 

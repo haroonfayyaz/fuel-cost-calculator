@@ -42,12 +42,12 @@ def test_location_nullable_before_geocoding(station_kwargs):
 def test_geocoded_station_has_point(station_kwargs):
     station = FuelStation.objects.create(**station_kwargs)
     station.location = Point(-95.5, 36.5, srid=4326)
-    station.geocoding_status = FuelStation.GeocodingStatus.SUCCESS
+    station.geocoding_status = FuelStation.GeocodingStatus.MATCHED
     station.geocoded_at = timezone.now()
     station.save()
     station.refresh_from_db()
     assert station.location.srid == 4326
-    assert station.geocoding_status == FuelStation.GeocodingStatus.SUCCESS
+    assert station.geocoding_status == FuelStation.GeocodingStatus.MATCHED
 
 
 @pytest.mark.django_db
