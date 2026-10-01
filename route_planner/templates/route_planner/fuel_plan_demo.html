@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fuel plan API — demo / verification</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <style>
+    :root {
+      font-family: system-ui, sans-serif;
+      line-height: 1.45;
+      color: #1a1a1a;
+    }
+    body {
+      margin: 0;
+      padding: 1rem 1.25rem 2rem;
+      max-width: 960px;
+    }
+    .banner {
+      background: #fff3cd;
+      border: 1px solid #e0c068;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1.25rem;
+    }
+    .banner strong { display: block; margin-bottom: 0.25rem; }
+    form {
+      display: grid;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    label { display: grid; gap: 0.25rem; font-weight: 600; }
+    input[type="text"] {
+      font: inherit;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      font: inherit;
+      padding: 0.55rem 1rem;
+      width: fit-content;
+      cursor: pointer;
+      border-radius: 4px;
+      border: 1px solid #333;
+      background: #222;
+      color: #fff;
+    }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    #map {
+      height: 420px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin-top: 1rem;
+    }
+    #error {
+      color: #842029;
+      background: #f8d7da;
+      border: 1px solid #f5c2c7;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin-top: 1rem;
+      display: none;
+    }
+    #summary {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: #f8f9fa;
+      border-radius: 6px;
+      border: 1px solid #dee2e6;
+      display: none;
+    }
+    #summary dl {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.35rem 1.25rem;
+      margin: 0;
+    }
+    #summary dt { font-weight: 600; }
+    #summary dd { margin: 0; }
+    .hint { font-size: 0.9rem; color: #555; font-weight: normal; }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <strong>Demo / manual verification UI</strong>
+    This page is for testing <code>POST {{ fuel_plan_api_path }}</code> visually.
+    It is not a production frontend; all planning logic lives in the Django API.
+    Map tiles use OpenStreetMap data via
+    <a href="https://foundation.wikimedia.org/wiki/Maps_Terms_of_Use">Wikimedia Maps</a>
+    (the volunteer <code>tile.openstreetmap.org</code> endpoint blocks many apps; see
+    <a href="https://osm.wiki/Blocked">osm.wiki/Blocked</a>).
+  </div>
+
+  <form id="plan-form" action="#" method="post">
+    <label>
+      Start location
+      <span class="hint">
+        Short trips (under ~500 mi) usually work with the default fuel dataset.
+        Long routes need geocoded stations along the corridor or the API returns 422.
+      </span>
+      <input type="text" id="start" name="start" value="Dallas, TX" required>
+    </label>
+    <label>
+      Finish location
+      <span class="hint">Example with refueling stops: Dallas, TX → Los Angeles, CA (after import + geocode)</span>
+      <input type="text" id="finish" name="finish" value="Houston, TX" required>
+    </label>
+    <button type="submit" id="submit-btn">Plan route (call API)</button>
+  </form>
+
+  <div id="error" role="alert"></div>
+
+  <div id="summary" aria-live="polite">
+    <h2 style="margin-top:0;font-size:1.1rem;">Response summary</h2>
+    <dl>
+      <dt>Route distance</dt>
+      <dd id="out-distance"></dd>
+      <dt>Fuel consumed</dt>
+      <dd id="out-consumed"></dd>
+      <dt>Fuel purchased</dt>
+      <dd id="out-purchased"></dd>
+      <dt>Total fuel cost</dt>
+      <dd id="out-total-cost"></dd>
+    </dl>
+  </div>
+
+  <div id="map"></div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script>
+    (function () {
+      const apiUrl = "{{ fuel_plan_api_path|escapejs }}";
+      const form = document.getElementById("plan-form");
+      const errorEl = document.getElementById("error");
+      const summaryEl = document.getElementById("summary");
+      const submitBtn = document.getElementById("submit-btn");
+
+      const map = L.map("map").setView([31.0, -99.0], 5);
+      L.tileLayer("https://maps.wikimedia.org/osm-intl/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        crossOrigin: true,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | ' +
+          '<a href="https://foundation.wikimedia.org/wiki/Maps_Terms_of_Use">Wikimedia maps</a>',
+      }).addTo(map);
+
+      let routeLayer = null;
+      let stopLayer = L.layerGroup().addTo(map);
+
+      function showError(message) {
+        errorEl.textContent = message;
+        errorEl.style.display = "block";
+        summaryEl.style.display = "none";
+      }
+
+      function clearError() {
+        errorEl.textContent = "";
+        errorEl.style.display = "none";
+      }
+
+      function popupHtml(stop) {
+        return (
+          "<strong>" + escapeHtml(stop.station_name) + "</strong><br>" +
+          "Price/gal: $" + escapeHtml(stop.price_per_gallon) + "<br>" +
+          "Route mile: " + escapeHtml(String(stop.route_mile)) + "<br>" +
+          "Gallons purchased: " + escapeHtml(stop.gallons_purchased) + "<br>" +
+          "Fuel cost: $" + escapeHtml(stop.fuel_cost)
+        );
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function renderResponse(data) {
+        if (routeLayer) {
+          map.removeLayer(routeLayer);
+          routeLayer = null;
+        }
+        stopLayer.clearLayers();
+
+        const geometry = {
+          type: data.route.type,
+          coordinates: data.route.coordinates,
+        };
+        routeLayer = L.geoJSON({ type: "Feature", geometry: geometry }, {
+          style: { color: "#2563eb", weight: 4, opacity: 0.85 },
+        }).addTo(map);
+
+        (data.fuel_stops || []).forEach(function (stop) {
+          L.marker([stop.latitude, stop.longitude])
+            .bindPopup(popupHtml(stop))
+            .addTo(stopLayer);
+        });
+
+        map.fitBounds(routeLayer.getBounds(), { padding: [24, 24] });
+
+        document.getElementById("out-distance").textContent =
+          data.distance_miles.toFixed(2) + " mi";
+        document.getElementById("out-consumed").textContent =
+          data.fuel_consumed_gallons + " gal";
+        document.getElementById("out-purchased").textContent =
+          data.fuel_purchased_gallons + " gal";
+        document.getElementById("out-total-cost").textContent =
+          "$" + data.total_fuel_cost;
+        summaryEl.style.display = "block";
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        clearError();
+        submitBtn.disabled = true;
+
+        const payload = {
+          start: document.getElementById("start").value.trim(),
+          finish: document.getElementById("finish").value.trim(),
+        };
+
+        fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then(function (response) {
+            return response.json().then(function (body) {
+              return { ok: response.ok, status: response.status, body: body };
+            });
+          })
+          .then(function (result) {
+            if (!result.ok) {
+              const detail = result.body && result.body.detail
+                ? result.body.detail
+                : "Request failed (HTTP " + result.status + ").";
+              showError(detail);
+              return;
+            }
+            renderResponse(result.body);
+          })
+          .catch(function () {
+            showError("Could not reach the API.");
+          })
+          .finally(function () {
+            submitBtn.disabled = false;
+          });
+      });
+    })();
+  </script>
+</body>
+</html>
