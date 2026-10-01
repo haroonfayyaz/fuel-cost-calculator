@@ -42,12 +42,12 @@ def test_location_nullable_before_geocoding(station_kwargs):
 def test_geocoded_station_has_point(station_kwargs):
     station = FuelStation.objects.create(**station_kwargs)
     station.location = Point(-95.5, 36.5, srid=4326)
-    station.geocoding_status = FuelStation.GeocodingStatus.SUCCESS
+    station.geocoding_status = FuelStation.GeocodingStatus.MATCHED
     station.geocoded_at = timezone.now()
     station.save()
     station.refresh_from_db()
     assert station.location.srid == 4326
-    assert station.geocoding_status == FuelStation.GeocodingStatus.SUCCESS
+    assert station.geocoding_status == FuelStation.GeocodingStatus.MATCHED
 
 
 @pytest.mark.django_db
@@ -65,21 +65,27 @@ def test_retail_price_check_constraint_enforced(station_kwargs):
 
 
 @pytest.mark.django_db
-def test_source_line_number_unique(station_kwargs):
+def test_physical_station_unique_constraint(station_kwargs):
     FuelStation.objects.create(**station_kwargs)
     with pytest.raises(IntegrityError):
-        FuelStation.objects.create(**{**station_kwargs, "name": "Duplicate line"})
+        FuelStation.objects.create(
+            **{
+                **station_kwargs,
+                "source_line_number": 3,
+                "name": "Duplicate physical stop",
+            }
+        )
 
 
 @pytest.mark.django_db
-def test_opis_id_not_unique_across_rows(station_kwargs):
+def test_opis_id_not_unique_across_different_locations(station_kwargs):
     FuelStation.objects.create(**station_kwargs)
     FuelStation.objects.create(
         **{
             **station_kwargs,
             "source_line_number": 3,
+            "address": "Different Address",
             "retail_price": Decimal("3.100000"),
-            "name": "Same OPIS, different price snapshot",
         }
     )
     assert FuelStation.objects.filter(opis_truckstop_id="7").count() == 2
@@ -89,6 +95,7 @@ def test_opis_id_not_unique_across_rows(station_kwargs):
 def test_meta_has_spatial_and_price_constraints():
     constraint_names = {c.name for c in FuelStation._meta.constraints}
     assert "fuelstation_retail_price_range" in constraint_names
+    assert "fuelstation_physical_station_uniq" in constraint_names
     price_constraint = next(
         c for c in FuelStation._meta.constraints if c.name == "fuelstation_retail_price_range"
     )

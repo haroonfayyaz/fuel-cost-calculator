@@ -74,7 +74,7 @@ class FuelStationQuerySet(models.QuerySet):
 
     def geocoded(self):
         return self.filter(
-            geocoding_status=FuelStation.GeocodingStatus.SUCCESS,
+            geocoding_status=FuelStation.GeocodingStatus.MATCHED,
             location__isnull=False,
         )
 
@@ -82,7 +82,8 @@ class FuelStationQuerySet(models.QuerySet):
 class FuelStation(models.Model):
     class GeocodingStatus(models.TextChoices):
         PENDING = "pending", "Pending"
-        SUCCESS = "success", "Success"
+        MATCHED = "matched", "Matched"
+        UNMATCHED = "unmatched", "Unmatched"
         FAILED = "failed", "Failed"
         SKIPPED = "skipped", "Skipped"
 
@@ -108,8 +109,7 @@ class FuelStation(models.Model):
     )
     geocoded_at = models.DateTimeField(null=True, blank=True)
     source_line_number = models.PositiveIntegerField(
-        unique=True,
-        help_text="1-based line number in data/fuel-prices.csv for traceability.",
+        help_text="1-based CSV line number of the canonical row selected on import.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -124,6 +124,10 @@ class FuelStation(models.Model):
             models.CheckConstraint(
                 condition=Q(retail_price__gt=0) & Q(retail_price__lte=Decimal("99.999999")),
                 name="fuelstation_retail_price_range",
+            ),
+            models.UniqueConstraint(
+                fields=["opis_truckstop_id", "address", "city", "state"],
+                name="fuelstation_physical_station_uniq",
             ),
         ]
 

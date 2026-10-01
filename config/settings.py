@@ -133,9 +133,59 @@ SPECTACULAR_SETTINGS = {
 # External routing (OpenRouteService / HeiGIT)
 ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 ORS_BASE_URL = _env("ORS_BASE_URL", "https://api.heigit.org").rstrip("/")
+ORS_CONNECT_TIMEOUT_SECONDS = _env_int("ORS_CONNECT_TIMEOUT_SECONDS", 5)
+ORS_READ_TIMEOUT_SECONDS = _env_int("ORS_READ_TIMEOUT_SECONDS", 30)
+ORS_GEOCODE_DELAY_SECONDS = float(os.environ.get("ORS_GEOCODE_DELAY_SECONDS", "0.15"))
+ORS_GEOCODE_MAX_API_REQUESTS_PER_RUN = _env_int("ORS_GEOCODE_MAX_API_REQUESTS_PER_RUN", 2800)
+ORS_GEOCODE_CACHE_TIMEOUT_SECONDS = _env_int("ORS_GEOCODE_CACHE_TIMEOUT_SECONDS", 86400)
+ORS_ROUTING_PROFILE = _env("ORS_ROUTING_PROFILE", "driving-car")
+ORS_ROUTING_CACHE_VERSION = _env("ORS_ROUTING_CACHE_VERSION", "1")
+ROUTE_COORDINATE_CACHE_DECIMALS = _env_int("ROUTE_COORDINATE_CACHE_DECIMALS", 4)
 
-# Application tuning (used by future route/fuel services)
+NOMINATIM_USER_AGENT = os.environ.get("NOMINATIM_USER_AGENT", "")
+NOMINATIM_DELAY_SECONDS = float(os.environ.get("NOMINATIM_DELAY_SECONDS", "1.1"))
+NOMINATIM_MIN_REQUEST_INTERVAL_SECONDS = float(
+    os.environ.get("NOMINATIM_MIN_REQUEST_INTERVAL_SECONDS", "1.0")
+)
+NOMINATIM_TIMEOUT_SECONDS = _env_int("NOMINATIM_TIMEOUT_SECONDS", 30)
+GEOCODE_DB_BATCH_SIZE = _env_int("GEOCODE_DB_BATCH_SIZE", 100)
+
+LOCATIONIQ_API_KEY = os.environ.get("LOCATIONIQ_API_KEY", "")
+LOCATIONIQ_BASE_URL = _env("LOCATIONIQ_BASE_URL", "https://us1.locationiq.com/v1").rstrip("/")
+LOCATIONIQ_MIN_REQUEST_INTERVAL_SECONDS = float(
+    os.environ.get("LOCATIONIQ_MIN_REQUEST_INTERVAL_SECONDS", "0.5")
+)
+LOCATIONIQ_TIMEOUT_SECONDS = _env_int("LOCATIONIQ_TIMEOUT_SECONDS", 30)
+
+_redis_url = os.environ.get("REDIS_URL", "").strip()
+if _redis_url:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": _redis_url,
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "fuel-route-planner",
+        }
+    }
+
+# Application tuning (used by route/fuel services)
 ROUTE_CACHE_TIMEOUT_SECONDS = _env_int("ROUTE_CACHE_TIMEOUT_SECONDS", 86400)
 ROUTE_STATION_CORRIDOR_MILES = _env_decimal("ROUTE_STATION_CORRIDOR_MILES", "5")
 VEHICLE_MAX_RANGE_MILES = _env_int("VEHICLE_MAX_RANGE_MILES", 500)
 VEHICLE_MPG = _env_int("VEHICLE_MPG", 10)
+
+# U.S. Census batch geocoder (offline station preprocessing)
+CENSUS_GEOCODER_BATCH_URL = _env(
+    "CENSUS_GEOCODER_BATCH_URL",
+    "https://geocoding.geo.census.gov/geocoder/locations/addressbatch",
+)
+CENSUS_GEOCODER_BENCHMARK = _env("CENSUS_GEOCODER_BENCHMARK", "Public_AR_Current")
+CENSUS_GEOCODER_BATCH_SIZE = _env_int("CENSUS_GEOCODER_BATCH_SIZE", 1000)
+CENSUS_GEOCODER_TIMEOUT_SECONDS = _env_int("CENSUS_GEOCODER_TIMEOUT_SECONDS", 60)
+CENSUS_GEOCODER_MAX_RETRIES = _env_int("CENSUS_GEOCODER_MAX_RETRIES", 3)
+CENSUS_GEOCODER_RETRY_BACKOFF_SECONDS = _env_int("CENSUS_GEOCODER_RETRY_BACKOFF_SECONDS", 2)
