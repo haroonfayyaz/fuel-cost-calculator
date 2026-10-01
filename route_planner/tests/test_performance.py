@@ -8,11 +8,11 @@ from decimal import Decimal
 from unittest.mock import create_autospec
 
 import pytest
-from django.contrib.gis.geos import LineString, Point
+from django.contrib.gis.geos import Point
 
 from route_planner.models import FuelStation
 from route_planner.services.route_planner import RouteLocationInput, RoutePlanner, RoutePlanRequest
-from route_planner.services.routing.base import RoutePoint, RouteResult, RoutingProvider
+from route_planner.services.routing.base import RouteResult, RoutingProvider
 from route_planner.services.station_finder import (
     corridor_station_queryset,
     find_stations_near_route,
