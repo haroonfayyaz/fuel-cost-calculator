@@ -6,8 +6,9 @@ Spatial strategy (single database query, no Python-side filtering of the full ta
 1. ``ST_SetSRID(ST_GeomFromEWKT(...), 4326)::geography`` — route polyline in WGS84 as geography
    so distances are measured in meters on the spheroid, not in degrees.
 
-2. ``ST_DWithin(station::geography, route::geography, radius_meters)`` — index-friendly corridor
-   filter (uses the station ``location`` GiST index when combined with other predicates).
+2. ``ST_DWithin(station::geography, route::geography, radius_meters)`` — corridor filter using the
+   ``location`` GiST index. ``us_only()`` is omitted here: CSV import is U.S.-only, and a broad
+   ``state IN (...)`` predicate can prevent the planner from using the spatial index.
 
 3. ``ST_LineLocatePoint(route, station)`` — fraction in [0, 1] along the line from start to finish.
 
@@ -63,28 +64,15 @@ def geojson_to_linestring(geometry: dict[str, Any]) -> LineString:
     return geos
 
 
-def find_stations_near_route(
-    route_geometry: dict[str, Any],
-    route_distance_miles: float,
-    *,
-    corridor_radius_miles: float | Decimal | None = None,
-) -> list[CandidateFuelStation]:
-    if route_distance_miles <= 0:
-        raise ValueError("route_distance_miles must be positive.")
-
-    if corridor_radius_miles is None:
-        corridor_radius_miles = float(settings.ROUTE_STATION_CORRIDOR_MILES)
-    corridor_meters = float(corridor_radius_miles) * METERS_PER_MILE
-
-    route_line = geojson_to_linestring(route_geometry)
-    route_ewkt = route_line.ewkt
-
+def corridor_station_queryset(
+    route_ewkt: str,
+    corridor_meters: float,
+):
+    """Single ORM queryset: PostGIS corridor filter + along-route ordering (not evaluated)."""
     route_geom_sql = "ST_SetSRID(ST_GeomFromEWKT(%s), 4326)"
     route_geog_sql = f"{route_geom_sql}::geography"
-
-    queryset = (
+    return (
         FuelStation.objects.geocoded()
-        .us_only()
         .filter(retail_price__gt=0)
         .extra(
             where=[
@@ -104,6 +92,24 @@ def find_stations_near_route(
         )
         .order_by("route_fraction")
     )
+
+
+def find_stations_near_route(
+    route_geometry: dict[str, Any],
+    route_distance_miles: float,
+    *,
+    corridor_radius_miles: float | Decimal | None = None,
+) -> list[CandidateFuelStation]:
+    if route_distance_miles <= 0:
+        raise ValueError("route_distance_miles must be positive.")
+
+    if corridor_radius_miles is None:
+        corridor_radius_miles = float(settings.ROUTE_STATION_CORRIDOR_MILES)
+    corridor_meters = float(corridor_radius_miles) * METERS_PER_MILE
+
+    route_line = geojson_to_linestring(route_geometry)
+    route_ewkt = route_line.ewkt
+    queryset = corridor_station_queryset(route_ewkt, corridor_meters)
 
     candidates: list[CandidateFuelStation] = []
     for station in queryset:

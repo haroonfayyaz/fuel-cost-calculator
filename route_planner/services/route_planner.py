@@ -6,11 +6,15 @@ Views should call ``RoutePlanner`` only; business rules live here and in downstr
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 from route_planner.services.fuel_optimizer import (
     FuelCandidateStation,
@@ -239,11 +243,19 @@ class RoutePlanner:
         self._station_finder = station_finder or DefaultStationFinder()
 
     def plan(self, request: RoutePlanRequest) -> RoutePlanResult:
+        plan_started = time.perf_counter()
+        geocoding_ms = 0.0
+
         _validate_endpoint("start", request.start)
         _validate_endpoint("finish", request.finish)
 
+        geocode_started = time.perf_counter()
         start = _resolve_endpoint("start", request.start, self._routing)
+        geocoding_ms += (time.perf_counter() - geocode_started) * 1000
+
+        geocode_started = time.perf_counter()
         finish = _resolve_endpoint("finish", request.finish, self._routing)
+        geocoding_ms += (time.perf_counter() - geocode_started) * 1000
 
         if (
             abs(start.latitude - finish.latitude) < 1e-9
@@ -251,22 +263,27 @@ class RoutePlanner:
         ):
             raise RoutePlannerValidationError("start and finish must not be the same location.")
 
+        routing_started = time.perf_counter()
         route = self._routing.get_route(
             RoutePoint(latitude=start.latitude, longitude=start.longitude),
             RoutePoint(latitude=finish.latitude, longitude=finish.longitude),
         )
+        routing_ms = (time.perf_counter() - routing_started) * 1000
 
         if route.total_distance_miles <= 0:
             raise RoutePlannerValidationError("Route distance must be positive.")
 
+        station_lookup_started = time.perf_counter()
         candidates = self._station_finder.find_stations_along_route(
             route.geometry,
             route.total_distance_miles,
         )
+        station_lookup_ms = (time.perf_counter() - station_lookup_started) * 1000
 
         vehicle = _vehicle_profile()
         optimizer_stations = [_candidate_to_optimizer_station(c) for c in candidates]
 
+        optimization_started = time.perf_counter()
         try:
             fuel_plan = optimize_fuel_plan(
                 route.total_distance_miles,
@@ -277,8 +294,24 @@ class RoutePlanner:
             )
         except RouteNotFeasibleError as exc:
             raise RoutePlanNotFeasibleError(str(exc)) from exc
+        optimization_ms = (time.perf_counter() - optimization_started) * 1000
 
         fuel_stops = tuple(_build_planned_stop(stop) for stop in fuel_plan.stops)
+
+        total_ms = (time.perf_counter() - plan_started) * 1000
+        logger.info(
+            "route_plan_completed",
+            extra={
+                "geocoding_ms": round(geocoding_ms, 2),
+                "routing_ms": round(routing_ms, 2),
+                "station_lookup_ms": round(station_lookup_ms, 2),
+                "optimization_ms": round(optimization_ms, 2),
+                "total_ms": round(total_ms, 2),
+                "candidate_station_count": len(candidates),
+                "route_distance_miles": round(route.total_distance_miles, 2),
+                "fuel_stop_count": len(fuel_stops),
+            },
+        )
 
         return RoutePlanResult(
             route=RouteSummary(
