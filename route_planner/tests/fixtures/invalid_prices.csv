@@ -1,0 +1,5 @@
+OPIS Truckstop ID,Truckstop Name,Address,City,State,Rack ID,Retail Price
+10,BAD ZERO,1 Main,Omaha,NE,1,0
+11,BAD NEG,2 Main,Omaha,NE,1,-1.5
+12,BAD TEXT,3 Main,Omaha,NE,1,not-a-price
+13,GOOD,4 Main,Omaha,NE,1,3.250
