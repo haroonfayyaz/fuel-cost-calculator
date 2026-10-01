@@ -12,6 +12,7 @@ from route_planner.services.routing.base import (
     RoutingAuthenticationError,
     RoutingBadRequestError,
     RoutingInvalidResponseError,
+    RoutingNotFoundError,
     RoutingRateLimitError,
     RoutingServerError,
 )
@@ -298,3 +299,109 @@ def test_routing_errors_map_to_application_exceptions(provider):
     session.request.return_value = _response(200, "not-json")
     with pytest.raises(RoutingInvalidResponseError):
         client.get_route(RoutePoint(1.0, 1.0), RoutePoint(2.0, 2.0))
+
+
+def test_get_route_404_raises_routing_not_found(provider):
+    client, session = provider
+    session.request.return_value = _response(404, {"error": "not found"})
+    with pytest.raises(RoutingNotFoundError):
+        client.get_route(RoutePoint(1.0, 1.0), RoutePoint(2.0, 2.0))
+
+
+def test_get_route_empty_features_raises_routing_invalid_response(provider):
+    client, session = provider
+    session.request.return_value = _response(200, {"features": []})
+    with pytest.raises(RoutingInvalidResponseError):
+        client.get_route(RoutePoint(1.0, 1.0), RoutePoint(2.0, 2.0))
+
+
+def test_get_route_request_timeout_raises_routing_server_error(provider):
+    client, session = provider
+    session.request.side_effect = requests.Timeout("timed out")
+    with pytest.raises(RoutingServerError):
+        client.get_route(RoutePoint(1.0, 1.0), RoutePoint(2.0, 2.0))
+
+
+def test_geocode_request_timeout_raises_routing_server_error(provider):
+    client, session = provider
+    session.request.side_effect = requests.Timeout("timed out")
+    with pytest.raises(RoutingServerError):
+        client.geocode_location("Denver, CO")
+
+
+def test_geocode_invalid_json_raises_routing_invalid_response(provider):
+    client, session = provider
+    session.request.return_value = _response(200, "not-json")
+    with pytest.raises(RoutingInvalidResponseError):
+        client.geocode_location("Denver, CO")
+
+
+def test_geocode_missing_coordinates_raises_routing_invalid_response(provider):
+    client, session = provider
+    session.request.return_value = _response(
+        200,
+        {
+            "features": [
+                {
+                    "geometry": {},
+                    "properties": {"label": "Bad", "country_code": "US"},
+                }
+            ]
+        },
+    )
+    with pytest.raises(RoutingInvalidResponseError):
+        client.geocode_location("Denver, CO")
+
+
+# --- Cache key helpers ---
+
+
+from route_planner.services.routing.routing_cache import (
+    geocode_cache_key,
+    normalize_geocode_query,
+    route_cache_key,
+    route_endpoint_cache_token,
+)
+
+
+def test_geocode_cache_key_uses_normalized_text_not_raw():
+    assert geocode_cache_key(normalize_geocode_query("  Austin, TX ")) == geocode_cache_key(
+        normalize_geocode_query("austin, tx")
+    )
+
+
+def test_route_cache_key_stable_for_rounded_coordinates():
+    start = RoutePoint(latitude=32.7767123, longitude=-96.7970123)
+    finish = RoutePoint(latitude=34.0522345, longitude=-118.2435678)
+    key_a = route_cache_key(
+        start,
+        finish,
+        profile="driving-car",
+        version="1",
+        decimal_places=4,
+    )
+    key_b = route_cache_key(
+        RoutePoint(32.7767123, -96.7970123),
+        RoutePoint(34.0522345, -118.2435678),
+        profile="driving-car",
+        version="1",
+        decimal_places=4,
+    )
+    assert key_a == key_b
+
+
+def test_route_cache_key_differs_for_materially_different_endpoints():
+    start = RoutePoint(latitude=32.7767, longitude=-96.7970)
+    finish_a = RoutePoint(latitude=34.0522, longitude=-118.2437)
+    finish_b = RoutePoint(latitude=34.0524, longitude=-118.2437)
+    key_a = route_cache_key(start, finish_a, profile="driving-car", version="1", decimal_places=4)
+    key_b = route_cache_key(start, finish_b, profile="driving-car", version="1", decimal_places=4)
+    assert key_a != key_b
+
+
+def test_route_endpoint_cache_token_rounds_to_configured_precision():
+    token = route_endpoint_cache_token(
+        RoutePoint(latitude=10.123456, longitude=-20.987654),
+        decimal_places=4,
+    )
+    assert token == "10.1235,-20.9877"

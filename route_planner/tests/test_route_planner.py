@@ -194,3 +194,21 @@ def test_fuel_stop_fields_populated_from_candidates(routing_provider, station_fi
     assert stop.name == "Station 1"
     assert stop.gallons_purchased > 0
     assert stop.cost == stop.gallons_purchased * stop.price_per_gallon
+
+
+def test_plan_never_calls_get_route_per_candidate_station(routing_provider, station_finder):
+    station_finder.find_stations_along_route.return_value = [
+        _candidate(station_id, route_mile=150.0 + station_id * 40.0)
+        for station_id in range(1, 9)
+    ]
+    planner = RoutePlanner(routing_provider, station_finder=station_finder)
+
+    planner.plan(
+        RoutePlanRequest(
+            start=RouteLocationInput(latitude=39.0, longitude=-105.0),
+            finish=RouteLocationInput(latitude=39.0, longitude=-104.0),
+        )
+    )
+
+    routing_provider.get_route.assert_called_once()
+    assert routing_provider.geocode_location.call_count == 0

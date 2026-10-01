@@ -5,7 +5,7 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from route_planner.models import FuelStation
+from route_planner.models import FuelStation, US_STATE_CODES
 from route_planner.services.fuel_import import (
     collapse_physical_duplicates,
     parse_csv_row,
@@ -24,6 +24,14 @@ def test_canadian_stations_are_ignored():
     assert summary.us_rows == 2
     assert FuelStation.objects.count() == 2
     assert not FuelStation.objects.filter(state="ON").exists()
+
+
+@pytest.mark.django_db
+def test_us_rows_are_limited_to_us_state_codes():
+    import_fuel_prices_from_csv(FIXTURES / "mixed_us_ca.csv")
+    states = set(FuelStation.objects.values_list("state", flat=True))
+    assert states
+    assert states.issubset(set(US_STATE_CODES))
 
 
 @pytest.mark.django_db

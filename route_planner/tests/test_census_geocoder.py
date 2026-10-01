@@ -246,3 +246,218 @@ def test_longitude_latitude_order():
     station.refresh_from_db()
     assert station.location.x == pytest.approx(lon)
     assert station.location.y == pytest.approx(lat)
+
+
+# --- ORS/Pelias station geocoding (mocked provider) ---
+
+
+from unittest.mock import create_autospec
+
+from route_planner.services.fuel_station_geocode import fuel_station_geocode_queries
+from route_planner.services.ors_geocode_runner import (
+    _ApiRequestBudget,
+    geocode_station_with_provider,
+    run_ors_geocode_job,
+)
+from route_planner.services.routing.base import GeocodedLocation, GeocodingNotFoundError, RoutingProvider
+
+
+@pytest.fixture
+def ors_station(db):
+    return FuelStation.objects.create(
+        opis_truckstop_id="999",
+        name="Pilot Travel Center",
+        address="I-40, EXIT 140",
+        city="Oklahoma City",
+        state="OK",
+        rack_id="1",
+        retail_price=Decimal("3.25"),
+        source_line_number=999001,
+    )
+
+
+def test_fuel_station_geocode_queries_include_address_and_name(ors_station):
+    queries = fuel_station_geocode_queries(ors_station)
+    assert any("I-40" in query for query in queries)
+    assert any("Pilot" in query for query in queries)
+
+
+def test_geocode_station_with_provider_uses_fallback_query(ors_station):
+    provider = create_autospec(RoutingProvider, instance=True)
+    provider.geocode_location.side_effect = [
+        GeocodingNotFoundError("no match"),
+        GeocodedLocation(latitude=35.5, longitude=-97.5, formatted_address="Matched"),
+    ]
+    point = geocode_station_with_provider(ors_station, provider, budget=_ApiRequestBudget(max_requests=None))
+    assert point is not None
+    assert provider.geocode_location.call_count == 2
+
+
+@pytest.mark.django_db
+def test_run_ors_geocode_job_marks_unmatched_when_no_results(ors_station):
+    provider = create_autospec(RoutingProvider, instance=True)
+    provider.geocode_location.side_effect = GeocodingNotFoundError("missing")
+    summary = run_ors_geocode_job(provider, limit=1)
+    ors_station.refresh_from_db()
+    assert summary.unmatched == 1
+    assert ors_station.geocoding_status == FuelStation.GeocodingStatus.UNMATCHED
+
+
+# --- Nominatim bulk geocoding (mocked HTTP) ---
+
+
+from route_planner.services.nominatim_geocoder import nominatim_cache_key
+from route_planner.services.nominatim_geocode_runner import run_nominatim_geocode_job
+
+
+@pytest.fixture
+def nominatim_station(db):
+    return FuelStation.objects.create(
+        opis_truckstop_id="888",
+        name="Test Stop",
+        address="100 Main",
+        city="Dallas",
+        state="TX",
+        rack_id="1",
+        retail_price=Decimal("3.00"),
+        source_line_number=888001,
+    )
+
+
+def test_nominatim_cache_key_is_hashed():
+    key = nominatim_cache_key("I-55, Exit 4 & I-40, West Memphis, AR")
+    assert key.startswith("nominatim:search:")
+    assert len(key.split(":")[-1]) == 64
+
+
+@pytest.mark.django_db
+def test_nominatim_geocode_job_matched(nominatim_station):
+    with patch(
+        "route_planner.services.nominatim_geocode_runner.search_us_location",
+        return_value=Point(-96.8, 32.7, srid=4326),
+    ):
+        summary = run_nominatim_geocode_job(
+            user_agent="TestApp/1.0 test@example.com",
+            timeout_seconds=5,
+            limit=1,
+            delay_seconds=0,
+        )
+    nominatim_station.refresh_from_db()
+    assert summary.matched == 1
+
+
+@pytest.mark.django_db
+def test_nominatim_geocode_job_marks_unmatched_when_search_returns_none(nominatim_station):
+    with patch(
+        "route_planner.services.nominatim_geocode_runner.search_us_location",
+        return_value=None,
+    ):
+        summary = run_nominatim_geocode_job(
+            user_agent="TestApp/1.0 test@example.com",
+            timeout_seconds=5,
+            limit=1,
+            delay_seconds=0,
+        )
+    nominatim_station.refresh_from_db()
+    assert summary.unmatched == 1
+
+
+@pytest.mark.django_db
+def test_nominatim_geocode_job_handles_timeout(nominatim_station):
+    with patch(
+        "route_planner.services.nominatim_geocode_runner.search_us_location",
+        side_effect=requests.Timeout("slow"),
+    ):
+        summary = run_nominatim_geocode_job(
+            user_agent="TestApp/1.0 test@example.com",
+            timeout_seconds=5,
+            limit=1,
+            delay_seconds=0,
+        )
+    nominatim_station.refresh_from_db()
+    assert summary.failed >= 1
+
+
+# --- LocationIQ bulk geocoding (mocked HTTP) ---
+
+
+from route_planner.services.locationiq_geocode_runner import run_locationiq_geocode_job
+
+
+@pytest.fixture
+def locationiq_station(db):
+    return FuelStation.objects.create(
+        opis_truckstop_id="777",
+        name="Test Stop",
+        address="100 Main",
+        city="Dallas",
+        state="TX",
+        rack_id="1",
+        retail_price=Decimal("3.00"),
+        source_line_number=777001,
+    )
+
+
+@pytest.mark.django_db
+def test_locationiq_geocode_job_matched(locationiq_station):
+    with patch(
+        "route_planner.services.locationiq_geocode_runner.search_us_location",
+        return_value=Point(-96.8, 32.7, srid=4326),
+    ):
+        summary = run_locationiq_geocode_job(
+            api_key="test-key",
+            base_url="https://us1.locationiq.com/v1",
+            timeout_seconds=5,
+            limit=1,
+        )
+    locationiq_station.refresh_from_db()
+    assert summary.matched == 1
+
+
+@pytest.mark.django_db
+def test_locationiq_geocode_job_marks_unmatched_when_search_returns_none(locationiq_station):
+    with patch(
+        "route_planner.services.locationiq_geocode_runner.search_us_location",
+        return_value=None,
+    ):
+        summary = run_locationiq_geocode_job(
+            api_key="test-key",
+            base_url="https://us1.locationiq.com/v1",
+            timeout_seconds=5,
+            limit=1,
+        )
+    locationiq_station.refresh_from_db()
+    assert summary.unmatched == 1
+
+
+@pytest.mark.django_db
+def test_run_geocode_job_unmatched_updates_station(db):
+    station = FuelStation.objects.create(
+        opis_truckstop_id="5",
+        name="Unmatched",
+        address="1 Main",
+        city="Nowhere",
+        state="OK",
+        rack_id="1",
+        retail_price=Decimal("3.000000"),
+        source_line_number=14,
+    )
+    response = _census_row(str(station.pk), "No_Match")
+    with patch(
+        "route_planner.services.geocode_runner.geocode_station_addresses",
+        return_value={str(station.pk): parse_batch_response(response)[str(station.pk)]},
+    ):
+        run_geocode_job(
+            force=False,
+            limit=None,
+            dry_run=False,
+            batch_url="https://example.test/batch",
+            benchmark="Public_AR_Current",
+            batch_size=1000,
+            timeout_seconds=1,
+            max_retries=1,
+            retry_backoff_seconds=0,
+        )
+    station.refresh_from_db()
+    assert station.geocoding_status == FuelStation.GeocodingStatus.UNMATCHED
+    assert station.location is None
