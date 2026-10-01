@@ -7,10 +7,7 @@ import logging
 from typing import Any
 from urllib.parse import urljoin
 
-import hashlib
-
 import requests
-from django.core.cache import cache
 
 from route_planner.services.routing.base import (
     GeocodedLocation,
@@ -25,6 +22,19 @@ from route_planner.services.routing.base import (
     RoutingRateLimitError,
     RoutingServerError,
 )
+from route_planner.services.routing.routing_cache import (
+    DEFAULT_ROUTING_CACHE_VERSION,
+    DEFAULT_ROUTING_PROFILE,
+    deserialize_geocoded_location,
+    deserialize_route_result,
+    geocode_cache_key,
+    normalize_geocode_query,
+    route_cache_key,
+    safe_cache_get,
+    safe_cache_set,
+    serialize_geocoded_location,
+    serialize_route_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +42,6 @@ METERS_TO_MILES = 0.000621371
 USA_COUNTRY_CODES = frozenset({"US", "USA"})
 ACCEPT_JSON = "application/json"
 ACCEPT_GEOJSON = "application/geo+json"
-
-
-def normalize_geocode_query(text: str) -> str:
-    return " ".join(text.strip().split()).casefold()
-
-
-def geocode_cache_key(text: str) -> str:
-    digest = hashlib.sha256(normalize_geocode_query(text).encode("utf-8")).hexdigest()
-    return f"routing:geocode:{digest}"
 
 
 class OpenRouteServiceProvider:
@@ -52,8 +53,12 @@ class OpenRouteServiceProvider:
         base_url: str,
         api_key: str,
         geocode_cache_timeout_seconds: int,
+        route_cache_timeout_seconds: int,
         connect_timeout_seconds: float,
         read_timeout_seconds: float,
+        routing_profile: str = DEFAULT_ROUTING_PROFILE,
+        routing_cache_version: str = DEFAULT_ROUTING_CACHE_VERSION,
+        route_coordinate_cache_decimals: int = 4,
         session: requests.Session | None = None,
     ) -> None:
         if not api_key:
@@ -61,15 +66,20 @@ class OpenRouteServiceProvider:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.geocode_cache_timeout_seconds = geocode_cache_timeout_seconds
+        self.route_cache_timeout_seconds = route_cache_timeout_seconds
+        self.routing_profile = routing_profile
+        self.routing_cache_version = routing_cache_version
+        self.route_coordinate_cache_decimals = route_coordinate_cache_decimals
         self.connect_timeout = connect_timeout_seconds
         self.read_timeout = read_timeout_seconds
         self._session = session or requests.Session()
 
     def geocode_location(self, text: str) -> GeocodedLocation:
-        cache_key = geocode_cache_key(text)
-        cached = cache.get(cache_key)
+        normalized = normalize_geocode_query(text)
+        cache_key = geocode_cache_key(normalized)
+        cached = safe_cache_get(cache_key)
         if cached is not None:
-            return GeocodedLocation(**cached)
+            return deserialize_geocoded_location(cached)
 
         params = {
             "text": text.strip(),
@@ -83,13 +93,28 @@ class OpenRouteServiceProvider:
             accept=ACCEPT_JSON,
         )
         location = self._parse_geocode_payload(payload)
-        cache.set(cache_key, location.__dict__, timeout=self.geocode_cache_timeout_seconds)
+        safe_cache_set(
+            cache_key,
+            serialize_geocoded_location(location),
+            timeout=self.geocode_cache_timeout_seconds,
+        )
         return location
 
     def get_route(self, start: RoutePoint, finish: RoutePoint) -> RouteResult:
+        cache_key = route_cache_key(
+            start,
+            finish,
+            profile=self.routing_profile,
+            version=self.routing_cache_version,
+            decimal_places=self.route_coordinate_cache_decimals,
+        )
+        cached = safe_cache_get(cache_key)
+        if cached is not None:
+            return deserialize_route_result(cached)
+
         url = urljoin(
             f"{self.base_url}/",
-            "openrouteservice/v2/directions/driving-car/geojson",
+            f"openrouteservice/v2/directions/{self.routing_profile}/geojson",
         )
         body = {
             "coordinates": [
@@ -103,7 +128,13 @@ class OpenRouteServiceProvider:
             json_body=body,
             accept=ACCEPT_GEOJSON,
         )
-        return self._parse_route_payload(payload)
+        result = self._parse_route_payload(payload)
+        safe_cache_set(
+            cache_key,
+            serialize_route_result(result),
+            timeout=self.route_cache_timeout_seconds,
+        )
+        return result
 
     def _headers(self, *, accept: str) -> dict[str, str]:
         return {

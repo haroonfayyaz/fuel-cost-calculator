@@ -137,6 +137,10 @@ ORS_CONNECT_TIMEOUT_SECONDS = _env_int("ORS_CONNECT_TIMEOUT_SECONDS", 5)
 ORS_READ_TIMEOUT_SECONDS = _env_int("ORS_READ_TIMEOUT_SECONDS", 30)
 ORS_GEOCODE_DELAY_SECONDS = float(os.environ.get("ORS_GEOCODE_DELAY_SECONDS", "0.15"))
 ORS_GEOCODE_MAX_API_REQUESTS_PER_RUN = _env_int("ORS_GEOCODE_MAX_API_REQUESTS_PER_RUN", 2800)
+ORS_GEOCODE_CACHE_TIMEOUT_SECONDS = _env_int("ORS_GEOCODE_CACHE_TIMEOUT_SECONDS", 86400)
+ORS_ROUTING_PROFILE = _env("ORS_ROUTING_PROFILE", "driving-car")
+ORS_ROUTING_CACHE_VERSION = _env("ORS_ROUTING_CACHE_VERSION", "1")
+ROUTE_COORDINATE_CACHE_DECIMALS = _env_int("ROUTE_COORDINATE_CACHE_DECIMALS", 4)
 
 NOMINATIM_USER_AGENT = os.environ.get("NOMINATIM_USER_AGENT", "")
 NOMINATIM_DELAY_SECONDS = float(os.environ.get("NOMINATIM_DELAY_SECONDS", "1.1"))
@@ -153,14 +157,23 @@ LOCATIONIQ_MIN_REQUEST_INTERVAL_SECONDS = float(
 )
 LOCATIONIQ_TIMEOUT_SECONDS = _env_int("LOCATIONIQ_TIMEOUT_SECONDS", 30)
 
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "fuel-route-planner",
+_redis_url = os.environ.get("REDIS_URL", "").strip()
+if _redis_url:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": _redis_url,
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "fuel-route-planner",
+        }
+    }
 
-# Application tuning (used by future route/fuel services)
+# Application tuning (used by route/fuel services)
 ROUTE_CACHE_TIMEOUT_SECONDS = _env_int("ROUTE_CACHE_TIMEOUT_SECONDS", 86400)
 ROUTE_STATION_CORRIDOR_MILES = _env_decimal("ROUTE_STATION_CORRIDOR_MILES", "5")
 VEHICLE_MAX_RANGE_MILES = _env_int("VEHICLE_MAX_RANGE_MILES", 500)

@@ -32,10 +32,20 @@ def provider():
         base_url="https://api.heigit.org",
         api_key="test-api-key",
         geocode_cache_timeout_seconds=3600,
+        route_cache_timeout_seconds=3600,
         connect_timeout_seconds=1.0,
         read_timeout_seconds=2.0,
         session=session,
     ), session
+
+
+def _directions_post_calls(session):
+    return [
+        call
+        for call in session.request.call_args_list
+        if call.kwargs.get("method") == "POST"
+        and "directions" in call.kwargs.get("url", "")
+    ]
 
 
 def _response(status_code: int, payload: dict | str):
@@ -170,6 +180,76 @@ def test_get_route_makes_exactly_one_directions_request(provider):
     assert result.duration_seconds == pytest.approx(900.0)
     assert result.total_distance_miles == pytest.approx(16093.4 * 0.000621371)
     assert result.geometry["type"] == "LineString"
+
+
+def test_get_route_caches_identical_endpoints(provider):
+    client, session = provider
+    session.request.return_value = _response(
+        200,
+        {
+            "features": [
+                {
+                    "geometry": {"type": "LineString", "coordinates": [[-105.0, 39.7], [-104.9, 39.8]]},
+                    "properties": {"summary": {"distance": 16093.4, "duration": 900.0}},
+                }
+            ]
+        },
+    )
+    start = RoutePoint(latitude=39.7392, longitude=-104.9903)
+    finish = RoutePoint(latitude=39.8, longitude=-104.9)
+
+    first = client.get_route(start, finish)
+    second = client.get_route(start, finish)
+
+    assert first.total_distance_meters == second.total_distance_meters
+    assert len(_directions_post_calls(session)) == 1
+
+
+def test_get_route_different_endpoints_do_not_share_cache(provider):
+    client, session = provider
+    session.request.return_value = _response(
+        200,
+        {
+            "features": [
+                {
+                    "geometry": {"type": "LineString", "coordinates": [[-105.0, 39.7], [-104.9, 39.8]]},
+                    "properties": {"summary": {"distance": 16093.4, "duration": 900.0}},
+                }
+            ]
+        },
+    )
+
+    client.get_route(RoutePoint(39.7, -105.0), RoutePoint(39.8, -104.9))
+    client.get_route(RoutePoint(39.7002, -105.0), RoutePoint(39.8, -104.9))
+
+    assert len(_directions_post_calls(session)) == 2
+
+
+def test_get_route_survives_cache_read_failure(provider, monkeypatch):
+    client, session = provider
+    session.request.return_value = _response(
+        200,
+        {
+            "features": [
+                {
+                    "geometry": {"type": "LineString", "coordinates": [[-105.0, 39.7]]},
+                    "properties": {"summary": {"distance": 100.0, "duration": 10.0}},
+                }
+            ]
+        },
+    )
+
+    def boom(_key, *_args, **_kwargs):
+        raise OSError("cache down")
+
+    monkeypatch.setattr(
+        "route_planner.services.routing.routing_cache.cache.get",
+        boom,
+    )
+
+    result = client.get_route(RoutePoint(39.7, -105.0), RoutePoint(39.8, -104.9))
+    assert result.total_distance_meters == pytest.approx(100.0)
+    assert len(_directions_post_calls(session)) == 1
 
 
 def test_get_route_longitude_latitude_ordering(provider):
